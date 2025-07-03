@@ -25,7 +25,7 @@ public class YoutubeCommentScraper {
     private static final String OUTPUT_FILE = "comments.txt";
     private static final String COUNT_FILE = "n.oofcomments.txt";
 
-    private static final String[] API_KEYS = new String[]{
+    public static final String[] API_KEYS = new String[]{
             "AIzaSyAARL2E6yrqKgASel63WVaTzg9Rf8gcYj0",
             "AIzaSyArsvaV7liupXFqf9GyMoL9c-nILgdetIo",
             "AIzaSyA86byuW-2u7t6vLdL2cWbKSqqJ4r2XXLQ",
@@ -160,6 +160,47 @@ public class YoutubeCommentScraper {
 
     private static synchronized void appendCommentToFile(String comment) {
         try (OutputStreamWriter osw = new OutputStreamWriter(new FileOutputStream(OUTPUT_FILE, true), StandardCharsets.UTF_8);
+             BufferedWriter bw = new BufferedWriter(osw);
+             PrintWriter out = new PrintWriter(bw)) {
+            out.println(comment);
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public static void fetchCommentsForVideo(String videoId, String outputFile, String apiKey, int totalComments) throws Exception {
+        YouTube youtubeService = new YouTube.Builder(
+                GoogleNetHttpTransport.newTrustedTransport(), JSON_FACTORY, null)
+                .setApplicationName(APPLICATION_NAME)
+                .build();
+
+        String pageToken = null;
+        int saved = 0;
+        while (saved < totalComments) {
+            YouTube.CommentThreads.List request = youtubeService.commentThreads()
+                    .list("snippet")
+                    .setVideoId(videoId)
+                    .setMaxResults((long) COMMENTS_PER_PAGE)
+                    .setTextFormat("plainText")
+                    .setKey(apiKey);
+            if (pageToken != null) request.setPageToken(pageToken);
+            CommentThreadListResponse response = request.execute();
+            for (CommentThread thread : response.getItems()) {
+                String comment = thread.getSnippet().getTopLevelComment().getSnippet().getTextDisplay();
+                String formatted = formatComment(comment);
+                if (!formatted.isEmpty()) {
+                    appendCommentToFile(formatted, outputFile);
+                    saved++;
+                    if (saved >= totalComments) break;
+                }
+            }
+            pageToken = response.getNextPageToken();
+            if (pageToken == null) break;
+        }
+    }
+
+    private static synchronized void appendCommentToFile(String comment, String outputFile) {
+        try (OutputStreamWriter osw = new OutputStreamWriter(new FileOutputStream(outputFile, true), StandardCharsets.UTF_8);
              BufferedWriter bw = new BufferedWriter(osw);
              PrintWriter out = new PrintWriter(bw)) {
             out.println(comment);
