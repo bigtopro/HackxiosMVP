@@ -16,8 +16,17 @@ public class SpotifyToYouTubeCommentScraper {
 
     public static void main(String[] args) throws Exception {
         System.out.println("[DEBUG] Starting main method...");
-        System.out.println("[DEBUG] Attempting to read song list from file: " + SONG_LIST_FILE);
-        List<String> trackUrls = readSongList(SONG_LIST_FILE);
+        String inputFile = SONG_LIST_FILE;
+        boolean isTabSeparated = false;
+        if (args.length > 0) {
+            inputFile = args[0];
+            // If the file is missing_comments.txt, expect tab-separated format
+            if (inputFile.equals("missing_comments.txt")) {
+                isTabSeparated = true;
+            }
+        }
+        System.out.println("[DEBUG] Attempting to read song list from file: " + inputFile);
+        List<String> trackUrls = readSongListFlexible(inputFile, isTabSeparated);
         System.out.println("[DEBUG] Successfully read " + trackUrls.size() + " tracks from song list.");
         int totalTracks = trackUrls.size();
         int startIndex = 0;
@@ -74,12 +83,11 @@ public class SpotifyToYouTubeCommentScraper {
                         System.out.println("[Scraper] Done: " + outputFile);
                         success = true;
                     } catch (GoogleJsonResponseException e) {
-                        String response = e.getContent();
-                        if (response != null && response.contains("quotaExceeded")) {
-                            System.err.println("[Quota] API key quota exceeded. Switching to next key.");
+                        if (e.getStatusCode() == 403) {
+                            System.err.println("[API] 403 Forbidden for current key. Marking as exhausted and switching to next key.");
                             keyManager.markCurrentKeyExhausted();
                             if (keyManager.allKeysExhausted()) {
-                                System.err.println("[Quota] All API keys exhausted. Saving checkpoint and waiting 1 hour before retrying...");
+                                System.err.println("[API] All API keys exhausted. Saving checkpoint and waiting 1 hour before retrying...");
                                 // Save checkpoint
                                 try (BufferedWriter bw = new BufferedWriter(new FileWriter("resume_checkpoint.txt"))) {
                                     bw.write(Integer.toString(i));
@@ -119,6 +127,21 @@ public class SpotifyToYouTubeCommentScraper {
     public static List<String> readSongList(String filename) throws IOException {
         try (BufferedReader br = new BufferedReader(new FileReader(filename))) {
             return br.lines().map(String::trim).filter(line -> !line.isEmpty()).collect(Collectors.toList());
+        }
+    }
+
+    // New: Flexible reader for tab-separated or plain URL files
+    public static List<String> readSongListFlexible(String filename, boolean isTabSeparated) throws IOException {
+        try (BufferedReader br = new BufferedReader(new FileReader(filename))) {
+            if (isTabSeparated) {
+                // Format: name \t artist \t url
+                return br.lines().map(String::trim).filter(line -> !line.isEmpty()).map(line -> {
+                    String[] parts = line.split("\t");
+                    return parts.length > 2 ? parts[2] : line;
+                }).collect(Collectors.toList());
+            } else {
+                return br.lines().map(String::trim).filter(line -> !line.isEmpty()).collect(Collectors.toList());
+            }
         }
     }
 } 

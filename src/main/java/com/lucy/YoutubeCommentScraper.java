@@ -35,16 +35,12 @@ public class YoutubeCommentScraper {
             "AIzaSyDLmy7AlEj8_T1_E8IwyYUybAV3Q-IHUmg",
             "AIzaSyDTPJs0yXc36jucXExMlLZ2yKh_i_Ncfxs",
             "AIzaSyAXojLaxjp7DHTfY8--9MHlzZW8PDdvLmw",
-            "AIzaSyDHLKXgHyIiGb32YKqKyjfzQKLrtShJnKA",
+            "AIzaSyDHLKXgHyIiGb32YKqKyjfzQKLrtShJnKA" ,
             "AIzaSyALLQNmpYSgqZD2Fzb_h5sbFp2nt2PTYdQ",
             "AIzaSyCepF4krpr4LM8LNt29dkFetxrDax5omtk",
             "AIzaSyAjxhbfAHnKFFXmR1wDCm7-ZCUl_KXnLkQ",
             "AIzaSyDzgJaKVxLiIDhx66D9idJD0WElz1RaSuQ",
-            "AIzaSyBaCpYyPmVA7EQDQ8DMx0BiLr65PwUJw94",
-            "AIzaSyAY8YP_QwxVYqEyhKTAcC0-_fZ4JMdVHSs",
-            "AIzaSyCXh8rz9uQauHtSROEXeVqAaawa2ud7d8U",
-            "AIzaSyDzgJaKVxLiIDhx66D9idJD0WElz1RaSuQ",
-            "AIzaSyBjYNSZTc25BXSQ7AwK00fSGh_wJEEVLNM" 
+            "AIzaSyBaCpYyPmVA7EQDQ8DMx0BiLr65PwUJw94"
     };
 
 
