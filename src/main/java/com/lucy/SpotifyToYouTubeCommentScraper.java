@@ -77,7 +77,7 @@ public class SpotifyToYouTubeCommentScraper {
 
                         // 3. Scrape comments for this video
                         String safeName = (info.name + "_" + info.artist).replaceAll("[^a-zA-Z0-9]", "_");
-                        String outputFile = "comments/" + safeName + ".txt";
+                        String outputFile = "comments/" + safeName + ".json";
                         System.out.println("[Scraper] Saving up to " + COMMENTS_PER_SONG + " comments to: '" + outputFile + "'");
                         YoutubeCommentScraper.fetchCommentsForVideo(videoId, outputFile, apiKey, COMMENTS_PER_SONG);
                         System.out.println("[Scraper] Done: " + outputFile);

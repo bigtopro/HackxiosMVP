@@ -7,6 +7,8 @@ import com.google.api.client.json.gson.GsonFactory;
 import com.google.api.services.youtube.YouTube;
 import com.google.api.services.youtube.model.CommentThread;
 import com.google.api.services.youtube.model.CommentThreadListResponse;
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
 
 import java.io.*;
 import java.nio.charset.StandardCharsets;
@@ -173,6 +175,15 @@ public class YoutubeCommentScraper {
         }
     }
 
+    public static class CommentObj {
+        public int index;
+        public String text;
+        public CommentObj(int index, String text) {
+            this.index = index;
+            this.text = text;
+        }
+    }
+
     public static void fetchCommentsForVideo(String videoId, String outputFile, String apiKey, int totalComments) throws Exception {
         YouTube youtubeService = new YouTube.Builder(
                 GoogleNetHttpTransport.newTrustedTransport(), JSON_FACTORY, null)
@@ -181,6 +192,7 @@ public class YoutubeCommentScraper {
 
         String pageToken = null;
         int saved = 0;
+        List<String> comments = new ArrayList<>();
         while (saved < totalComments) {
             YouTube.CommentThreads.List request = youtubeService.commentThreads()
                     .list("snippet")
@@ -192,15 +204,20 @@ public class YoutubeCommentScraper {
             CommentThreadListResponse response = request.execute();
             for (CommentThread thread : response.getItems()) {
                 String comment = thread.getSnippet().getTopLevelComment().getSnippet().getTextDisplay();
-                String formatted = formatComment(comment);
-                if (!formatted.isEmpty()) {
-                    appendCommentToFile(formatted, outputFile);
+                String cleaned = comment.replaceAll("https?://\\S+", "").trim().replaceAll("[\n\r]+", " ");
+                if (!cleaned.isEmpty()) {
+                    comments.add(cleaned);
                     saved++;
                     if (saved >= totalComments) break;
                 }
             }
             pageToken = response.getNextPageToken();
             if (pageToken == null) break;
+        }
+        // Write all comments as a JSON array of strings
+        Gson gson = new GsonBuilder().setPrettyPrinting().create();
+        try (Writer writer = new OutputStreamWriter(new FileOutputStream(outputFile), java.nio.charset.StandardCharsets.UTF_8)) {
+            gson.toJson(comments, writer);
         }
     }
 
