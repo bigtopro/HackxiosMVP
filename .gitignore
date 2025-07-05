@@ -2,3 +2,7 @@ comments/
 target/
 grok3-api-master/
 venv311/
+lid.176.bin
+non_english_comments.json
+sampled_comments.json
+*.class
