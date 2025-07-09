@@ -1,8 +1,29 @@
-comments/
-target/
-grok3-api-master/
-venv311/
-lid.176.bin
-non_english_comments.json
-sampled_comments.json
-*.class
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+ENV/
+env/
+.env
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.code-workspace
+
+# Project specific
+labeled_comments.json
+labeled_comments_openrouter.json
+resume_checkpoint.txt
+failed_keys.json
+failed_models.json
+comment_processing.log
+
+# Mac
+.DS_Store
+.AppleDouble
+.LSOverride
