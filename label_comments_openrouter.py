@@ -5,6 +5,8 @@ import time
 import logging
 from typing import List, Dict, Optional
 from datetime import datetime, timedelta
+import threading
+from queue import Queue
 
 # Configure logging
 logging.basicConfig(
@@ -216,116 +218,177 @@ def create_prompt(comments: List[str]) -> List[Dict]:
     
     return messages
 
-def process_batch(comments: List[str], base_index: int, key_manager: APIKeyManager, model_manager: ModelManager) -> Optional[Dict]:
-    """Process a batch of comments using OpenRouter API with key and model rotation."""
+def process_batch_threadsafe(comments, base_index, key, model, thread_id):
+    """Process a batch of comments using a single API key and model."""
     messages = create_prompt(comments)
-    max_retries = len(key_manager.api_keys) * len(model_manager.models)
-    
-    logger.info(f"Processing batch of {len(comments)} comments (indices {base_index}-{base_index + len(comments) - 1})")
-    logger.info(f"Available keys: {len(key_manager.api_keys)}, Available models: {len(model_manager.models)}")
-    
-    for attempt in range(max_retries):
-        current_key = key_manager.get_current_key()
-        current_model = model_manager.get_current_model()
-        key_retry_count = 0
-        max_key_retries = 3
-        
-        while key_retry_count < max_key_retries:
-            key_manager.key_usage[current_key]["attempts"] += 1
-            model_manager.model_usage[current_model]["attempts"] += 1
-            
-            logger.info(f"Attempt {key_retry_count + 1}/{max_key_retries}")
-            logger.info(f"Using API key: ...{current_key[-10:]} with model: {current_model}")
-            
-            try:
-                response = requests.post(
-                    url=API_URL,
-                    headers={
-                        "Authorization": f"Bearer {current_key}",
-                        "Content-Type": "application/json",
-                        "HTTP-Referer": "https://github.com/yourusername/LUCY-1",
-                        "X-Title": "LUCY-1 Comment Analyzer"
-                    },
-                    data=json.dumps({
-                        "model": current_model,
-                        "messages": messages
-                    }, ensure_ascii=False).encode('utf-8'),
-                    timeout=480
-                )
-                
-                if response.status_code == 200:
-                    result = response.json()
-                    
-                    # Log token usage
-                    if "usage" in result:
-                        usage = result["usage"]
-                        logger.info("Token Usage:")
-                        logger.info(f"  Prompt tokens: {usage.get('prompt_tokens', 0)}")
-                        logger.info(f"  Completion tokens: {usage.get('completion_tokens', 0)}")
-                        logger.info(f"  Total tokens: {usage.get('total_tokens', 0)}")
-                    
-                    content = result["choices"][0]["message"]["content"]
-                    content = content.replace("```json", "").replace("```", "").strip()
-                    
-                    try:
-                        parsed = json.loads(content)
-                        
-                        if isinstance(parsed, dict) and "comments" in parsed and parsed["comments"]:
-                            enriched_comments = []
-                            for comment_result in parsed["comments"]:
-                                if not isinstance(comment_result, dict) or "index" not in comment_result or "label" not in comment_result:
-                                    raise ValueError("Invalid comment format in response")
-                                
-                                original_index = base_index + comment_result["index"]
-                                if 0 <= comment_result["index"] < len(comments):
-                                    enriched_comments.append({
-                                        "index": original_index,
-                                        "label": comment_result["label"],
-                                        "text": comments[comment_result["index"]]
-                                    })
-                            
-                            if enriched_comments:
-                                key_manager.key_usage[current_key]["successes"] += 1
-                                model_manager.model_usage[current_model]["successes"] += 1
-                                logger.info(f"Successfully processed {len(enriched_comments)} comments")
-                                return {"comments": enriched_comments}
-                    except (json.JSONDecodeError, ValueError) as e:
-                        logger.error(f"Error processing response: {str(e)}")
-                
-                if response.status_code == 429 or "quota exceeded" in response.text.lower():
-                    logger.warning(f"Model quota exceeded for {current_model}")
-                    model_manager.mark_model_failed(current_model)
-                    if model_manager.models:
-                        model_manager.rotate_model()
-                        break
-                    else:
-                        logger.critical("All models have failed!")
-                        return None
-                
-                key_retry_count += 1
-                if key_retry_count < max_key_retries:
-                    logger.info(f"Retrying with same key and model (Attempt {key_retry_count + 1}/{max_key_retries})")
-                    time.sleep(5)
-                else:
-                    logger.warning(f"Key failed after {max_key_retries} attempts")
-                    key_manager.mark_key_failed(current_key)
-                    key_manager.rotate_key()
-                    break
-                
-            except Exception as e:
-                logger.error(f"Error with current key and model: {str(e)}")
-                key_retry_count += 1
-                if key_retry_count < max_key_retries:
-                    logger.info(f"Retrying with same key and model (Attempt {key_retry_count + 1}/{max_key_retries})")
-                    time.sleep(5)
-                else:
-                    logger.warning(f"Key failed after {max_key_retries} attempts")
-                    key_manager.mark_key_failed(current_key)
-                    key_manager.rotate_key()
-                    break
-    
-    logger.error("All attempts failed for this batch")
+    max_key_retries = 3
+    for key_retry_count in range(max_key_retries):
+        try:
+            logger.info(f"Thread-{thread_id}: Using API key ...{key[-10:]} with model {model} for batch {base_index}-{base_index+len(comments)-1}")
+            response = requests.post(
+                url=API_URL,
+                headers={
+                    "Authorization": f"Bearer {key}",
+                    "Content-Type": "application/json",
+                    "HTTP-Referer": "https://github.com/yourusername/LUCY-1",
+                    "X-Title": "LUCY-1 Comment Analyzer"
+                },
+                data=json.dumps({
+                    "model": model,
+                    "messages": messages
+                }, ensure_ascii=False).encode('utf-8'),
+                timeout=480
+            )
+            if response.status_code == 200:
+                result = response.json()
+                content = result["choices"][0]["message"]["content"]
+                content = content.replace("```json", "").replace("```", "").strip()
+                try:
+                    parsed = json.loads(content)
+                    if isinstance(parsed, dict) and "comments" in parsed and parsed["comments"]:
+                        enriched_comments = []
+                        for comment_result in parsed["comments"]:
+                            if not isinstance(comment_result, dict) or "index" not in comment_result or "label" not in comment_result:
+                                continue
+                            original_index = base_index + comment_result["index"]
+                            if 0 <= comment_result["index"] < len(comments):
+                                enriched_comments.append({
+                                    "index": original_index,
+                                    "label": comment_result["label"],
+                                    "text": comments[comment_result["index"]]
+                                })
+                        if enriched_comments:
+                            logger.info(f"Thread-{thread_id}: Successfully processed batch {base_index}-{base_index+len(comments)-1} with key ...{key[-10:]} and model {model}")
+                            return {"comments": enriched_comments}
+                except (json.JSONDecodeError, ValueError):
+                    logger.warning(f"Thread-{thread_id}: Failed to parse response for batch {base_index}-{base_index+len(comments)-1}")
+                    pass
+            if response.status_code == 429 or "quota exceeded" in response.text.lower():
+                logger.warning(f"Thread-{thread_id}: Rate limit/quota exceeded for key ...{key[-10:]} and model {model}")
+                return None
+            time.sleep(5)
+        except Exception as e:
+            logger.error(f"Thread-{thread_id}: Error processing batch {base_index}-{base_index+len(comments)-1}: {str(e)}")
+            time.sleep(5)
+    logger.error(f"Thread-{thread_id}: Failed to process batch {base_index}-{base_index+len(comments)-1} after all retries")
     return None
+
+
+def worker(batch_queue, result_queue, key_list, model_list, key_lock, rate_limit_delay, thread_id):
+    key_idx = thread_id % len(key_list)  # Each thread starts with a different key
+    model_idx = thread_id % len(model_list)
+    logger.info(f"Thread-{thread_id}: Starting with API key ...{key_list[key_idx][-10:]} and model {model_list[model_idx]}")
+    
+    while True:
+        try:
+            batch, base_index = batch_queue.get(timeout=2)
+        except:
+            break  # No more batches
+        
+        success = False
+        for attempt in range(len(key_list)):
+            with key_lock:
+                key = key_list[key_idx]
+                model = model_list[model_idx % len(model_list)]
+                logger.info(f"Thread-{thread_id}: Attempt {attempt+1}/{len(key_list)} - Using key ...{key[-10:]} with model {model}")
+            
+            result = process_batch_threadsafe(batch, base_index, key, model, thread_id)
+            if result:
+                result_queue.put(result)
+                success = True
+                break
+            else:
+                # Rotate to next key/model
+                with key_lock:
+                    key_idx = (key_idx + 1) % len(key_list)
+                    model_idx = (model_idx + 1) % len(model_list)
+                    logger.info(f"Thread-{thread_id}: Rotating to key ...{key_list[key_idx][-10:]} and model {model_list[model_idx % len(model_list)]}")
+        
+        if not success:
+            logger.error(f"Thread-{thread_id}: Failed to process batch {base_index}-{base_index+len(batch)-1} with all keys")
+        
+        time.sleep(rate_limit_delay)
+        batch_queue.task_done()
+
+
+def main_parallel():
+    logger.info("Starting parallel comment processing script")
+    
+    # Check for existing progress
+    start_index = get_last_processed_index()
+    logger.info(f"Resuming from index: {start_index}")
+    
+    with open('sampled_comments.json', 'r', encoding='utf-8') as f:
+        all_comments = json.load(f)
+    total_comments = len(all_comments)
+    logger.info(f"Found {total_comments} comments to process")
+
+    batch_queue = Queue()
+    # Only add batches from the start_index onwards
+    for i in range(start_index, total_comments, BATCH_SIZE):
+        batch_queue.put((all_comments[i:i+BATCH_SIZE], i))
+
+    result_queue = Queue()
+    key_lock = threading.Lock()
+    num_threads = min(len(API_KEYS), batch_queue.qsize())
+    threads = []
+
+    processed_comments = [start_index]  # Start from where we left off
+    progress_lock = threading.Lock()
+
+    def progress_worker():
+        last_reported = start_index
+        while True:
+            with progress_lock:
+                done = processed_comments[0]
+            if done >= total_comments:
+                break
+            if done != last_reported:
+                percent = (done / total_comments) * 100
+                logger.info(f"Progress: {done}/{total_comments} ({percent:.2f}%)")
+                print(f"Progress: {done}/{total_comments} ({percent:.2f}%)")
+                last_reported = done
+            time.sleep(2)
+
+    # Start progress reporter
+    progress_thread = threading.Thread(target=progress_worker)
+    progress_thread.start()
+
+    logger.info(f"Starting {num_threads} threads with {len(API_KEYS)} API keys and {len(MODELS)} models")
+    for idx in range(num_threads):
+        t = threading.Thread(target=worker, args=(batch_queue, result_queue, API_KEYS, MODELS, key_lock, RATE_LIMIT_DELAY, idx))
+        t.start()
+        threads.append(t)
+
+    batch_queue.join()
+    for t in threads:
+        t.join()
+    with progress_lock:
+        processed_comments[0] = total_comments  # Ensure 100% at end
+    progress_thread.join()
+
+    # Load existing results if any
+    existing_results = []
+    try:
+        with open('labeled_comments_openrouter.json', 'r', encoding='utf-8') as f:
+            existing_data = json.load(f)
+            existing_results = existing_data.get('comments', [])
+            logger.info(f"Loaded {len(existing_results)} existing results")
+    except (FileNotFoundError, json.JSONDecodeError):
+        logger.info("No existing results found, starting fresh")
+
+    # Collect new results
+    new_results = []
+    while not result_queue.empty():
+        new_results.extend(result_queue.get()['comments'])
+    
+    # Combine and sort all results
+    all_results = existing_results + new_results
+    all_results.sort(key=lambda x: x['index'])
+
+    with open('labeled_comments_openrouter.json', 'w', encoding='utf-8') as f:
+        json.dump({'comments': all_results}, f, indent=2, ensure_ascii=False)
+    logger.info(f"Parallel processing complete! Total results: {len(all_results)}")
 
 def save_results(results: Dict, output_file: str, is_first_batch: bool):
     """Save or append results to the output file."""
@@ -364,99 +427,5 @@ def estimate_time_remaining(start_time: datetime, current_index: int, total_comm
         return str(remaining_time)
     return "Calculating..."
 
-def main():
-    """Main function to process comments."""
-    logger.info("Starting comment processing script")
-    
-    # Initialize managers
-    key_manager = APIKeyManager(API_KEYS)
-    model_manager = ModelManager(MODELS)
-    
-    try:
-        # Read all comments
-        logger.info("Reading comments from file...")
-        all_comments = read_all_comments('comments.json')
-        total_comments = len(all_comments)
-        logger.info(f"Found {total_comments} comments to process")
-        
-        # Get the last processed index
-        start_index = get_last_processed_index()
-        logger.info(f"Resuming from index: {start_index}")
-        
-        # Initialize results structure
-        if start_index == 0:
-            results = {"comments": []}
-            logger.info("Starting fresh processing")
-        else:
-            try:
-                with open('labeled_comments_openrouter.json', 'r', encoding='utf-8') as f:
-                    results = json.load(f)
-                    logger.info(f"Loaded {len(results['comments'])} existing results")
-            except (FileNotFoundError, json.JSONDecodeError):
-                results = {"comments": []}
-                logger.warning("Could not load existing results, starting fresh")
-        
-        start_time = datetime.now()
-        logger.info(f"Processing started at: {start_time}")
-        
-        # Process comments in batches
-        for i in range(start_index, total_comments, BATCH_SIZE):
-            batch = all_comments[i:i + BATCH_SIZE]
-            
-            # Log batch information
-            logger.info(f"\nProcessing batch {i//BATCH_SIZE + 1} of {(total_comments + BATCH_SIZE - 1)//BATCH_SIZE}")
-            logger.info(f"Batch size: {len(batch)} comments")
-            
-            # Process the batch
-            batch_results = process_batch(batch, i, key_manager, model_manager)
-            
-            if batch_results is None:
-                logger.error("Failed to process batch after all retries")
-                save_checkpoint(i)
-                break
-            
-            # Save results
-            save_results(batch_results, 'labeled_comments_openrouter.json', i == 0)
-            save_checkpoint(i + len(batch))
-            
-            # Calculate and display progress
-            progress = (i + len(batch)) / total_comments * 100
-            time_remaining = estimate_time_remaining(start_time, i + len(batch), total_comments)
-            
-            logger.info(f"Progress: {progress:.2f}%")
-            logger.info(f"Time remaining: {time_remaining}")
-            logger.info(f"Available API keys: {len(key_manager.api_keys)}")
-            logger.info(f"Available models: {len(model_manager.models)}")
-            
-            # Log usage statistics
-            logger.info("\nCurrent Statistics:")
-            for key in key_manager.key_usage:
-                if key_manager.key_usage[key]["attempts"] > 0:
-                    logger.info(f"Key ...{key[-10:]}: {key_manager.key_usage[key]}")
-            for model in model_manager.model_usage:
-                if model_manager.model_usage[model]["attempts"] > 0:
-                    logger.info(f"Model {model}: {model_manager.model_usage[model]}")
-            
-            # Rate limiting delay
-            if i + BATCH_SIZE < total_comments:
-                logger.info(f"Waiting {RATE_LIMIT_DELAY} seconds before next batch...")
-                time.sleep(RATE_LIMIT_DELAY)
-        
-        logger.info("\nProcessing complete!")
-        logger.info(f"Total time elapsed: {datetime.now() - start_time}")
-        
-    except KeyboardInterrupt:
-        logger.warning("\nProcess interrupted by user")
-        logger.info("Saving progress...")
-        save_checkpoint(i)
-        logger.info(f"Saved checkpoint at index {i}")
-    
-    except Exception as e:
-        logger.critical(f"\nUnexpected error: {str(e)}")
-        logger.info("Saving progress...")
-        save_checkpoint(i)
-        logger.info(f"Saved checkpoint at index {i}")
-        raise
-
 if __name__ == "__main__":
-    main() 
+    main_parallel() 
