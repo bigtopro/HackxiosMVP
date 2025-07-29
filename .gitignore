@@ -17,6 +17,9 @@ env/
 *.so
 *.dll
 
+# Specific large files
+lid.176.bin
+
 # Java
 target/
 *.class
