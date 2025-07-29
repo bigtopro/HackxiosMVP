@@ -5,10 +5,21 @@ __pycache__/
 *.so
 .Python
 venv/
+venv311/
 ENV/
 env/
 .env
 *.log
+
+# Large files
+*.bin
+*.dylib
+*.so
+*.dll
+
+# Java
+target/
+*.class
 
 # IDE
 .vscode/
