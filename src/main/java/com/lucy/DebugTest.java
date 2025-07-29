@@ -1,54 +1,37 @@
 package com.lucy;
 
-import se.michaelthelin.spotify.exceptions.SpotifyWebApiException;
 import java.io.IOException;
 import java.util.List;
 
 public class DebugTest {
     public static void main(String[] args) throws Exception {
-        // 1. Test reading songList.txt
-        System.out.println("[TEST] Reading songList.txt...");
-        List<String> trackUrls = SpotifyToYouTubeCommentScraper.readSongList("songList.txt");
-        System.out.println("[TEST] Found " + trackUrls.size() + " tracks.");
-        for (int i = 0; i < Math.min(3, trackUrls.size()); i++) {
-            System.out.println("[TEST] Track URL " + (i+1) + ": " + trackUrls.get(i));
+        String songListFile = "songList.txt";
+        if (args.length > 0) {
+            songListFile = args[0];
         }
 
-        // 2. Test SpotifyHelper
-        if (!trackUrls.isEmpty()) {
-            String testUrl = trackUrls.get(0);
-            System.out.println("\n[TEST] Fetching song info from Spotify for: " + testUrl);
+        List<String> songs = SpotifyToYouTubeCommentScraper.readSongListFlexible(songListFile, songListFile.equals("missing_comments.txt"));
+        System.out.println("Found " + songs.size() + " songs in list");
+
+        ApiKeyManager apiKeyManager = new ApiKeyManager(YoutubeCommentScraper.API_KEYS);
+        YouTubeSearchHelper searchHelper = new YouTubeSearchHelper(apiKeyManager);
+
+        for (String url : songs) {
             try {
-                SpotifyHelper.SongInfo info = SpotifyHelper.getSongInfoFromSpotifyUrl(testUrl);
-                System.out.println("[TEST] Song: " + info.name);
-                System.out.println("[TEST] Artist: " + info.artist);
-
-                // 3. Test YouTubeSearchHelper
-                String query = info.name + " " + info.artist;
-                String apiKey = YoutubeCommentScraper.API_KEYS[0];
-                System.out.println("\n[TEST] Searching YouTube for: '" + query + "'");
-                String videoId = YouTubeSearchHelper.getTopVideoId(query, apiKey);
-                if (videoId != null) {
-                    System.out.println("[TEST] Top YouTube video ID: " + videoId);
-                    System.out.println("[TEST] YouTube link: https://www.youtube.com/watch?v=" + videoId);
-
-                    // 4. Test YoutubeCommentScraper.fetchCommentsForVideo
-                    String outputFile = "debug_comments.txt";
-                    System.out.println("\n[TEST] Fetching comments for video and saving to: " + outputFile);
-                    YoutubeCommentScraper.fetchCommentsForVideo(videoId, outputFile, apiKey, 10);
-                    System.out.println("[TEST] Comments fetched and saved to " + outputFile);
+                SpotifyHelper.SongInfo info = SpotifyHelper.getSongInfoFromSpotifyUrl(url);
+                System.out.println("\nProcessing: " + info.name + " by " + info.artist);
+                
+                YouTubeSearchHelper.VideoInfo videoInfo = searchHelper.getVideoInfo(info.name, info.artist);
+                if (videoInfo.commentsDisabled) {
+                    System.out.println("Comments are disabled for video: " + videoInfo.videoId);
                 } else {
-                    System.out.println("[TEST] No YouTube video found for: '" + query + "'");
+                    System.out.printf("Found video %s with %d comments%n", 
+                        videoInfo.videoId, videoInfo.commentCount);
                 }
-            } catch (SpotifyWebApiException e) {
-                System.err.println("[TEST][ERROR] Spotify API error: " + e.getMessage());
-                e.printStackTrace(System.err);
-            } catch (IOException e) {
-                System.err.println("[TEST][ERROR] IO error: " + e.getMessage());
-                e.printStackTrace(System.err);
+                
+                Thread.sleep(1000); // Avoid rate limits
             } catch (Exception e) {
-                System.err.println("[TEST][ERROR] General error: " + e.getMessage());
-                e.printStackTrace(System.err);
+                System.err.println("Error processing " + url + ": " + e.getMessage());
             }
         }
     }

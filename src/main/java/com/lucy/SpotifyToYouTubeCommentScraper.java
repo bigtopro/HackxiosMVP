@@ -1,147 +1,213 @@
 package com.lucy;
 
 import com.google.api.client.googleapis.json.GoogleJsonResponseException;
-import se.michaelthelin.spotify.exceptions.SpotifyWebApiException;
+import com.google.gson.Gson;
+import com.google.gson.reflect.TypeToken;
 
 import java.io.*;
-import java.security.GeneralSecurityException;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
-import java.util.concurrent.TimeUnit;
-import java.util.stream.Collectors;
+import java.util.Map;
 
 public class SpotifyToYouTubeCommentScraper {
     private static final String SONG_LIST_FILE = "songList.txt";
     private static final String[] YOUTUBE_API_KEYS = YoutubeCommentScraper.API_KEYS;
-    private static final int COMMENTS_PER_SONG = 226800; // Max YouTube comment limit
+    private static final String PROGRESS_FILE = "scraping_progress.txt";
+
+    private static class SongProgress {
+        final int index;
+        final String spotifyUrl;
+        final String name;
+        final String artist;
+        boolean completed;
+        String videoId;
+        long commentCount;
+        boolean commentsDisabled;
+
+        SongProgress(int index, String spotifyUrl, String name, String artist) {
+            this.index = index;
+            this.spotifyUrl = spotifyUrl;
+            this.name = name;
+            this.artist = artist;
+            this.completed = false;
+        }
+    }
 
     public static void main(String[] args) throws Exception {
-        System.out.println("[DEBUG] Starting main method...");
+        ApiKeyManager apiKeyManager = new ApiKeyManager(YOUTUBE_API_KEYS);
+        YouTubeSearchHelper searchHelper = new YouTubeSearchHelper(apiKeyManager);
+
         String inputFile = SONG_LIST_FILE;
         boolean isTabSeparated = false;
         if (args.length > 0) {
             inputFile = args[0];
-            // If the file is missing_comments.txt, expect tab-separated format
             if (inputFile.equals("missing_comments.txt")) {
                 isTabSeparated = true;
             }
         }
-        System.out.println("[DEBUG] Attempting to read song list from file: " + inputFile);
+
         List<String> trackUrls = readSongListFlexible(inputFile, isTabSeparated);
-        System.out.println("[DEBUG] Successfully read " + trackUrls.size() + " tracks from song list.");
         int totalTracks = trackUrls.size();
-        int startIndex = 0;
-        File checkpointFile = new File("resume_checkpoint.txt");
-        if (checkpointFile.exists()) {
-            try (BufferedReader br = new BufferedReader(new FileReader(checkpointFile))) {
-                String line = br.readLine();
-                if (line != null && !line.isEmpty()) {
-                    startIndex = Integer.parseInt(line.trim());
-                    System.out.println("[RESUME] Resuming from song index: " + startIndex);
-                }
+
+        Map<String, Map<String, Object>> videoCache = new HashMap<>();
+        File cacheFile = new File("video_cache.json");
+        if (cacheFile.exists()) {
+            try (Reader reader = new FileReader(cacheFile)) {
+                videoCache = new Gson().fromJson(reader, new TypeToken<Map<String, Map<String, Object>>>() {
+                }.getType());
             } catch (Exception e) {
-                System.err.println("[RESUME] Failed to read checkpoint file, starting from beginning.");
+                System.err.println("[WARN] Could not read video_cache.json: " + e.getMessage());
             }
         }
-        int trackNum = startIndex + 1;
-        System.out.println("Starting processing of " + totalTracks + " tracks from " + SONG_LIST_FILE);
-        // Ensure the comments directory exists
-        File commentsDir = new File("comments");
-        if (!commentsDir.exists()) {
-            boolean created = commentsDir.mkdirs();
-            if (created) {
-                System.out.println("[INFO] Created directory: comments");
-            }
-        }
-        ApiKeyManager keyManager = new ApiKeyManager(YOUTUBE_API_KEYS);
-        for (int i = startIndex; i < trackUrls.size(); i++) {
-            String url = trackUrls.get(i);
-            System.out.println("\n=== [" + trackNum + "/" + totalTracks + "] Processing Spotify URL: " + url + " ===");
-            try {
-                // 1. Get song info from Spotify
-                System.out.println("Fetching song info from Spotify...");
-                SpotifyHelper.SongInfo info = SpotifyHelper.getSongInfoFromSpotifyUrl(url);
-                String query = info.name + " " + info.artist;
-                System.out.println("[Spotify] Song: '" + info.name + "' | Artist: '" + info.artist + "'");
-                System.out.println("Searching YouTube for: '" + query + "'");
 
-                boolean success = false;
-                while (!success) {
-                    String apiKey = keyManager.getCurrentKey();
-                    try {
-                        String videoId = YouTubeSearchHelper.getTopVideoId(query, apiKey);
-                        if (videoId == null) {
-                            System.err.println("[YouTube] No video found for: '" + query + "'");
-                            break;
-                        }
-                        System.out.println("[YouTube] Top video ID: " + videoId + " (https://www.youtube.com/watch?v=" + videoId + ")");
-
-                        // 3. Scrape comments for this video
-                        String safeName = (info.name + "_" + info.artist).replaceAll("[^a-zA-Z0-9]", "_");
-                        String outputFile = "comments/" + safeName + ".json";
-                        System.out.println("[Scraper] Saving up to " + COMMENTS_PER_SONG + " comments to: '" + outputFile + "'");
-                        YoutubeCommentScraper.fetchCommentsForVideo(videoId, outputFile, apiKey, COMMENTS_PER_SONG);
-                        System.out.println("[Scraper] Done: " + outputFile);
-                        success = true;
-                    } catch (GoogleJsonResponseException e) {
-                        if (e.getStatusCode() == 403) {
-                            System.err.println("[API] 403 Forbidden for current key. Marking as exhausted and switching to next key.");
-                            keyManager.markCurrentKeyExhausted();
-                            if (keyManager.allKeysExhausted()) {
-                                System.err.println("[API] All API keys exhausted. Saving checkpoint and waiting 1 hour before retrying...");
-                                // Save checkpoint
-                                try (BufferedWriter bw = new BufferedWriter(new FileWriter("resume_checkpoint.txt"))) {
-                                    bw.write(Integer.toString(i));
-                                } catch (IOException ioe) {
-                                    System.err.println("[Checkpoint] Failed to write checkpoint file: " + ioe.getMessage());
-                                }
-                                System.err.println("[Checkpoint] Progress saved. You can resume tomorrow.");
-                                Thread.sleep(60 * 60 * 1000); // 1 hour
-                                keyManager.resetAllKeys();
-                            } else {
-                                keyManager.switchToNextKey();
-                            }
-                        } else {
-                            throw e;
-                        }
+        List<SongProgress> progress = loadProgress();
+        if (progress.isEmpty()) {
+            for (int i = 0; i < trackUrls.size(); i++) {
+                String url = trackUrls.get(i);
+                try {
+                    SpotifyHelper.SongInfo info = SpotifyHelper.getSongInfoFromSpotifyUrl(url);
+                    if (info != null) {
+                        progress.add(new SongProgress(i + 1, url, info.name, info.artist));
                     }
-                    // Throttle requests to avoid burst
-                    TimeUnit.SECONDS.sleep(2);
+                } catch (Exception e) {
+                    System.err.printf("[ERROR] Failed to get Spotify info for URL: %s. Error: %s%n", url, e.getMessage());
                 }
-            } catch (SpotifyWebApiException e) {
-                System.err.println("[ERROR] Spotify API error for URL: '" + url + "' - " + e.getMessage());
-                e.printStackTrace(System.err);
+            }
+            saveProgress(progress);
+        }
+
+        for (SongProgress song : progress) {
+            if (song.completed) {
+                System.out.printf("[INFO] Skipping completed song %d/%d: %s - %s%n",
+                        song.index, totalTracks, song.name, song.artist);
+                continue;
+            }
+
+            String cacheKey = song.name + " " + song.artist;
+            if (videoCache.containsKey(cacheKey)) {
+                Map<String, Object> cached = videoCache.get(cacheKey);
+                if (cached != null && cached.containsKey("videoId")) {
+                    System.out.printf("[INFO] Skipping song %s - already processed and in cache.%n", cacheKey);
+                    song.completed = true;
+                    saveProgress(progress);
+                    continue;
+                }
+            }
+            
+            try {
+                System.out.printf("[INFO] Processing song %d/%d: %s - %s%n",
+                        song.index, totalTracks, song.name, song.artist);
+
+                YouTubeSearchHelper.VideoInfo videoInfo = searchHelper.getVideoInfo(song.name, song.artist);
+                song.videoId = videoInfo.videoId;
+                song.commentCount = videoInfo.commentCount;
+                song.commentsDisabled = videoInfo.commentsDisabled;
+
+                if (song.commentsDisabled) {
+                    System.out.println("[WARN] Comments are disabled for video: " + song.videoId);
+                    song.completed = true;
+                    saveProgress(progress);
+                    continue;
+                }
+
+                System.out.printf("[INFO] Video %s: %d comments%n",
+                        song.videoId, song.commentCount);
+
+                String safeName = (song.name + "_" + song.artist).replaceAll("[^a-zA-Z0-9]", "_");
+                String outputFile = "comments/" + safeName + ".json";
+                new File("comments").mkdirs();
+
+                int recommendedThreads = getRecommendedThreads(song.commentCount);
+
+                YoutubeCommentScraper.fetchCommentsParallel(
+                        song.videoId, outputFile, recommendedThreads, apiKeyManager);
+                song.completed = true;
+                saveProgress(progress);
+
             } catch (GoogleJsonResponseException e) {
-                System.err.println("[ERROR] YouTube API error for query: '" + url + "' - " + e.getDetails());
-                e.printStackTrace(System.err);
+                if (e.getStatusCode() == 403 && e.getMessage().contains("quota")) {
+                    System.err.println("[ERROR] A quota error occurred that was not handled by the key manager. This may indicate all keys are exhausted.");
+                } else {
+                    System.err.println("[ERROR] Google API Error: " + e.getDetails().getMessage());
+                }
+                e.printStackTrace();
             } catch (Exception e) {
-                System.err.println("[ERROR] General error for URL: '" + url + "' - " + e.getMessage());
-                e.printStackTrace(System.err);
+                System.err.println("[ERROR] Failed to process song: " + e.getMessage());
+                e.printStackTrace();
             }
-            trackNum++;
-        }
-        // Remove checkpoint file if finished
-        if (checkpointFile.exists()) checkpointFile.delete();
-        System.out.println("\nAll tracks processed. Check output files for results.");
-    }
-
-    public static List<String> readSongList(String filename) throws IOException {
-        try (BufferedReader br = new BufferedReader(new FileReader(filename))) {
-            return br.lines().map(String::trim).filter(line -> !line.isEmpty()).collect(Collectors.toList());
         }
     }
 
-    // New: Flexible reader for tab-separated or plain URL files
+    private static int getRecommendedThreads(long commentCount) {
+        if (commentCount < 5000) return 2;
+        if (commentCount < 20000) return 4;
+        if (commentCount < 50000) return 8;
+        if (commentCount < 100000) return 12;
+        if (commentCount < 150000) return 16;
+        return 20;
+    }
+
+    private static List<SongProgress> loadProgress() {
+        File file = new File(PROGRESS_FILE);
+        if (!file.exists()) {
+            return new ArrayList<>();
+        }
+        try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
+            List<SongProgress> progress = new ArrayList<>();
+            String line;
+            while ((line = reader.readLine()) != null) {
+                String[] parts = line.split("\t");
+                if (parts.length >= 4) {
+                    SongProgress song = new SongProgress(
+                            Integer.parseInt(parts[0]),
+                            parts[1],
+                            parts[2],
+                            parts[3]
+                    );
+                    if (parts.length > 4) {
+                        song.completed = Boolean.parseBoolean(parts[4]);
+                        if (parts.length > 5 && parts[5] != null && !parts[5].equals("null")) song.videoId = parts[5];
+                        if (parts.length > 6) song.commentCount = Long.parseLong(parts[6]);
+                        if (parts.length > 7) song.commentsDisabled = Boolean.parseBoolean(parts[7]);
+                    }
+                    progress.add(song);
+                }
+            }
+            return progress;
+        } catch (IOException | NumberFormatException e) {
+            System.err.println("[WARN] Could not parse progress file, starting from scratch. Error: " + e.getMessage());
+            return new ArrayList<>();
+        }
+    }
+
+    private static void saveProgress(List<SongProgress> progress) {
+        try (BufferedWriter writer = new BufferedWriter(new FileWriter(PROGRESS_FILE))) {
+            for (SongProgress song : progress) {
+                writer.write(String.format("%d\t%s\t%s\t%s\t%b\t%s\t%d\t%b%n",
+                        song.index, song.spotifyUrl, song.name, song.artist, song.completed,
+                        song.videoId, song.commentCount, song.commentsDisabled));
+            }
+        } catch (IOException e) {
+            System.err.println("[ERROR] Failed to save progress: " + e.getMessage());
+        }
+    }
+
     public static List<String> readSongListFlexible(String filename, boolean isTabSeparated) throws IOException {
-        try (BufferedReader br = new BufferedReader(new FileReader(filename))) {
-            if (isTabSeparated) {
-                // Format: name \t artist \t url
-                return br.lines().map(String::trim).filter(line -> !line.isEmpty()).map(line -> {
+        List<String> songs = new ArrayList<>();
+        try (BufferedReader reader = new BufferedReader(new FileReader(filename))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (isTabSeparated) {
                     String[] parts = line.split("\t");
-                    return parts.length > 2 ? parts[2] : line;
-                }).collect(Collectors.toList());
-            } else {
-                return br.lines().map(String::trim).filter(line -> !line.isEmpty()).collect(Collectors.toList());
+                    if (parts.length > 0) {
+                        songs.add(parts[0]);
+                    }
+                } else {
+                    songs.add(line);
+                }
             }
         }
+        return songs;
     }
 } 
