@@ -22,6 +22,9 @@ public class SampleCommentsAggregator {
         List<String> aggregated = new ArrayList<>();
         Random random = new Random();
         for (File jsonFile : jsonFiles) {
+            // Skip files that don't follow the videoId_comments.json pattern
+            if (!jsonFile.getName().endsWith("_comments.json")) continue;
+
             List<String> comments;
             try (Reader reader = new InputStreamReader(new FileInputStream(jsonFile), StandardCharsets.UTF_8)) {
                 comments = gson.fromJson(reader, List.class);

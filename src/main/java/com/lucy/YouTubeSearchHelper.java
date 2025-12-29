@@ -37,22 +37,26 @@ public class YouTubeSearchHelper {
 
     public VideoInfo getVideoInfo(String songName, String artist) throws Exception {
         String searchQuery = String.format("%s %s", songName, artist);
-        
+
         if (cache.hasValidEntry(searchQuery)) {
             VideoCache.CacheEntry entry = cache.get(searchQuery);
             return new VideoInfo(entry.videoId, entry.commentCount, entry.commentsDisabled);
         }
-        
+
         String videoId = searchForVideo(searchQuery);
         if (videoId == null) {
             throw new RuntimeException("Failed to find video after retries for query: " + searchQuery);
         }
-        
+
         VideoInfo info = getVideoStatistics(videoId);
-        
+
         cache.put(searchQuery, new VideoCache.CacheEntry(info.videoId, info.commentCount, info.commentsDisabled));
-        
+
         return info;
+    }
+
+    public VideoInfo getVideoInfoById(String videoId) throws Exception {
+        return getVideoStatistics(videoId);
     }
     
     private String searchForVideo(String query) throws GeneralSecurityException, IOException, InterruptedException {

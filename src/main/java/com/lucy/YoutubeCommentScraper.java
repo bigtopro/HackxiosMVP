@@ -34,22 +34,59 @@ public class YoutubeCommentScraper {
     private static final JsonFactory JSON_FACTORY = GsonFactory.getDefaultInstance();
     private static final int COMMENTS_PER_PAGE = 100;
 
-    public static final String[] API_KEYS = new String[]{
-        "AIzaSyDzgJaKVxLiIDhx66D9idJD0WElz1RaSuQ",
-        "AIzaSyCbFxU29Ueg63iMoAXVOLjTkIGukjzAPGw",
-        "AIzaSyCsl1Gdtf9GPb6xfkZ5rws6vpO1qi4H9WU",
-        "AIzaSyAripygCXZeQNwCqMPH1cF3sX09su290ek",
-        "AIzaSyAa3QmEkpHqzd87S3l_kFdd08zHSUDre9A",
-        "AIzaSyDHLKXgHyIiGb32YKqKyjfzQKLrtShJnKA",
-        "AIzaSyALLQNmpYSgqZD2Fzb_h5sbFp2nt2PTYdQ",
-        "AIzaSyBaCpYyPmVA7EQDQ8DMx0BiLr65PwUJw94",
-        "AIzaSyAY8YP_QwxVYqEyhKTAcC0-_fZ4JMdVHSs",
-        "AIzaSyA86byuW-2u7t6vLdL2cWbKSqqJ4r2XXLQ",
-        "AIzaSyDLmy7AlEj8_T1_E8IwyYUybAV3Q-IHUmg",
-        "AIzaSyBegsB2yz7T92qlp6HMfsNx2QupyR3H6rY",
-        "AIzaSyAXojLaxjp7DHTfY8--9MHlzZW8PDdvLmw",
-        "AIzaSyCXh8rz9uQauHtSROEXeVqAaawa2ud7d8U"
-    };
+    public static final String[] API_KEYS = loadApiKeysFromEnv();
+
+    private static String[] loadApiKeysFromEnv() {
+        List<String> keys = new ArrayList<>();
+
+        // Try to load up to 20 API keys from environment variables
+        for (int i = 1; i <= 20; i++) {
+            String envKeyName = "YOUTUBE_API_KEY_" + i;
+            String key = System.getenv(envKeyName);
+
+            // If not found in environment, try to load from .env file
+            if (key == null || key.trim().isEmpty()) {
+                key = loadFromEnvFile(envKeyName);
+            }
+
+            if (key != null && !key.trim().isEmpty()) {
+                keys.add(key.trim());
+            }
+        }
+
+        if (keys.isEmpty()) {
+            System.err.println("[ERROR] No YouTube API keys found in environment variables!");
+            System.err.println("Please set YOUTUBE_API_KEY_1, YOUTUBE_API_KEY_2, etc. in your environment or .env file");
+        } else {
+            System.out.println("[INFO] Loaded " + keys.size() + " YouTube API keys from environment");
+        }
+
+        return keys.toArray(new String[0]);
+    }
+
+    private static String loadFromEnvFile(String keyName) {
+        try {
+            java.nio.file.Path envPath = java.nio.file.Paths.get(".env");
+            if (java.nio.file.Files.exists(envPath)) {
+                java.util.List<String> lines = java.nio.file.Files.readAllLines(envPath);
+                for (String line : lines) {
+                    if (line.trim().startsWith(keyName + "=")) {
+                        String value = line.split("=", 2)[1].trim();
+                        if (value.startsWith("\"") && value.endsWith("\"")) {
+                            value = value.substring(1, value.length() - 1);
+                        }
+                        if (value.startsWith("'") && value.endsWith("'")) {
+                            value = value.substring(1, value.length() - 1);
+                        }
+                        return value;
+                    }
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("[WARN] Could not read .env file: " + e.getMessage());
+        }
+        return null;
+    }
 
     private static class CommentPage {
         int pageNumber;
@@ -72,7 +109,7 @@ public class YoutubeCommentScraper {
         while (true) {
             String currentKey = apiKeyManager.getNextAvailableKey();
             int retries = 0;
-            
+
             try {
                 YouTube.Comments.List request = youtubeService.comments()
                         .list("snippet")
@@ -110,7 +147,7 @@ public class YoutubeCommentScraper {
                     retries++;
                      if (retries >= maxRetries) {
                         System.err.printf("[ERROR] Exceeded max retries fetching replies for comment %s. Skipping. Error: %s%n", parentId, e.getMessage());
-                        break; 
+                        break;
                     }
                     System.err.printf("[WARNING] Retrying to fetch replies for comment %s (%d/%d)...%n", parentId, retries, maxRetries);
                     Thread.sleep(1000 * retries); // backoff

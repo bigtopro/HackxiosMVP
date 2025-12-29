@@ -1,46 +1,30 @@
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-venv/
-venv311/
-ENV/
-env/
-.env
-*.log
-
-# Large files
-*.bin
-*.dylib
-*.so
-*.dll
-
-# Specific large files
-lid.176.bin
-
-# Java
-target/
+# Compiled class files
 *.class
 
-# IDE
-.vscode/
+# Maven build artifacts
+target/
+*.jar
+*.war
+*.ear
+
+# IDE specific files
 .idea/
-*.code-workspace
+*.iml
+*.ipr
+*.iws
+.vscode/
 
-# Project specific
-labeled_comments.json
-labeled_comments_openrouter.json
-resume_checkpoint.txt
-failed_keys.json
-failed_models.json
-comment_processing.log
-
-# Comments directory - contains processed comment files
-comments/
-
-# Mac
+# OS generated files
 .DS_Store
-.AppleDouble
-.LSOverride
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+
+# Log files
+*.log
+
+# Local configuration
+local.properties
+.env

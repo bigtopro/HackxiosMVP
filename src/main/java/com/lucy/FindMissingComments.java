@@ -3,30 +3,39 @@ package com.lucy;
 import java.io.File;
 import java.io.IOException;
 import java.util.List;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 
 public class FindMissingComments {
     public static void main(String[] args) throws IOException {
-        String songListFile = "songList.txt";
+        String videoListFile = "videoList.txt";
         if (args.length > 0) {
-            songListFile = args[0];
+            videoListFile = args[0];
         }
 
-        List<String> songs = SpotifyToYouTubeCommentScraper.readSongListFlexible(songListFile, songListFile.equals("missing_comments.txt"));
-        System.out.println("Found " + songs.size() + " songs in list");
+        List<String> videoIds = readVideoList(videoListFile);
+        System.out.println("Found " + videoIds.size() + " video IDs in list");
 
         int missing = 0;
-        for (String url : songs) {
-            String[] parts = url.split("\t");
-            String songName = parts.length > 1 ? parts[0] : url;
-            String safeName = songName.replaceAll("[^a-zA-Z0-9]", "_");
-            File commentFile = new File("comments/" + safeName + ".json");
-            
+        for (String videoId : videoIds) {
+            File commentFile = new File("comments/" + videoId + "_comments.json");
+
             if (!commentFile.exists()) {
-                System.out.println("Missing comments for: " + url);
+                System.out.println("Missing comments for video: " + videoId);
                 missing++;
             }
         }
 
-        System.out.println("\nTotal missing: " + missing + " out of " + songs.size());
+        System.out.println("\nTotal missing: " + missing + " out of " + videoIds.size());
     }
-} 
+
+    private static List<String> readVideoList(String filename) throws IOException {
+        if (Files.exists(Paths.get(filename))) {
+            return Files.readAllLines(Paths.get(filename));
+        } else {
+            // Return a default list or empty list
+            System.out.println("Video list file not found: " + filename);
+            return new java.util.ArrayList<>();
+        }
+    }
+}

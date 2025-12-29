@@ -12,11 +12,19 @@ public class ApiKeyTester {
 
     public static void main(String[] args) {
         try {
+            String[] apiKeys = YoutubeCommentScraper.API_KEYS;
+
+            if (apiKeys.length == 0) {
+                System.out.println("No API keys found in environment variables.");
+                System.out.println("Please set YOUTUBE_API_KEY_1, YOUTUBE_API_KEY_2, etc. in your environment or .env file");
+                return;
+            }
+
             // Test each API key
-            for (String apiKey : YoutubeCommentScraper.API_KEYS) {
+            for (String apiKey : apiKeys) {
                 try {
                     System.out.println("\nTesting API key: " + apiKey);
-                    
+
                     YouTube youtube = new YouTube.Builder(
                             GoogleNetHttpTransport.newTrustedTransport(),
                             JSON_FACTORY,
@@ -31,14 +39,14 @@ public class ApiKeyTester {
                             .setKey(apiKey);
 
                     VideoListResponse response = request.execute();
-                    
+
                     if (response.getItems() != null && !response.getItems().isEmpty()) {
                         System.out.println("✓ API key is valid!");
                         System.out.println("Video title: " + response.getItems().get(0).getSnippet().getTitle());
                     } else {
                         System.out.println("✗ API key returned no results");
                     }
-                    
+
                 } catch (Exception e) {
                     System.out.println("✗ API key is invalid: " + e.getMessage());
                 }
@@ -47,4 +55,4 @@ public class ApiKeyTester {
             e.printStackTrace();
         }
     }
-} 
+}
